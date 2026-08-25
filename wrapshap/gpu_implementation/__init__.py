@@ -1,1 +1,1 @@
-from .wrapshap_gpu import WrapshapGPU, print_XFFS_tree
+from .wrapshap_gpu import WrapshapGPU, print_XFFS_tree, plot_XFFS_tree

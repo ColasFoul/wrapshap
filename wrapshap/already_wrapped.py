@@ -1,1 +1,2 @@
 from ._internal._already_wrapped import WrappedBinaryClassifierXGB, WrappedRegressorXGB
+from ._internal._already_wrapped_LGB import WrappedBinaryClassifierLGB, WrappedRegressorLGB

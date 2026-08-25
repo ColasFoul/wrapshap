@@ -114,7 +114,7 @@ class Wrapshap:
         )
     
 
-    def shapFFS(self, surrogate_metrics: bool = False, top: int = None):
+    def shapFFS(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
         """
         Wrapshap implementation of Forward Feature Selection (FFS). 
 
@@ -135,7 +135,8 @@ class Wrapshap:
             feature_names=self.feature_names,
             surrogate_metrics=surrogate_metrics,
             top=top,
-            task_type=self.task_type
+            task_type=self.task_type,
+            plot=plot
         )
     
 

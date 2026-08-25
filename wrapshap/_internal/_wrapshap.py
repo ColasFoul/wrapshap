@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.metrics import r2_score, mean_absolute_error
 from scipy.special import expit
+import matplotlib.pyplot as plt
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Public API - These utilities are used by other modules and re-exported.
@@ -102,7 +103,8 @@ def shapFFS(
         feature_names: list,
         surrogate_metrics: bool = False,
         top: int = None,
-        task_type: str = 'classification'
+        task_type: str = 'classification',
+        plot: bool = False
 ) -> tuple:
     """
     Wrapshap implementation of Forward Feature Selection (FFS). 
@@ -181,6 +183,8 @@ def shapFFS(
             top=top,
             task_type=task_type
         )
+    if plot :
+        _plot_performance(results)
 
     return selected_features, results
 
@@ -405,3 +409,44 @@ def _calculate_metrics(y_true, lnr_predictions, model_predictions, task_type, su
         metrics = _surrogate_metrics(y_true, lnr_predictions, task_type, metrics)
     
     return metrics
+
+def _plot_performance(perfs):
+    n_features_list = []
+    r2_list         = []
+    
+    for n_feat, values in perfs.items():
+        n_features_list.append(int(n_feat))
+        for metric, value in values.items():
+            if metric == 'test_pred_r2':
+                r2_list.append(value)
+    
+    # Trier par nombre de features
+    order        = np.argsort(n_features_list)
+    n_features   = np.array(n_features_list)[order]
+    r2_scores    = np.array(r2_list)[order]
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    ax.plot(n_features, r2_scores,
+            color='steelblue', linewidth=2,
+            marker='o', markersize=5, zorder=3)
+    ax.fill_between(n_features, r2_scores, alpha=0.08, color='steelblue')
+    
+    
+    # Point max (pour référence)
+    ax.scatter(n_features[np.argmax(r2_scores)], r2_scores.max(),
+               color='gray', zorder=4, s=60, marker='D',
+               label=f'Max R²={r2_scores.max():.3f} ({n_features[np.argmax(r2_scores)]} features)')
+    
+    ax.set_xlabel('Number of selected features', fontsize=12)
+    ax.set_ylabel('Test R²', fontsize=12)
+    ax.set_title('Feature selection — performance vs. parsimony trade-off',
+                 fontsize=12, fontweight='bold')
+    ax.legend(fontsize=9, framealpha=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_xticks(n_features)
+    ax.set_xticklabels(n_features, rotation=45 if len(n_features) > 10 else 0)
+    ax.tick_params(labelsize=9)
+    
+    plt.tight_layout()
+    plt.show()
