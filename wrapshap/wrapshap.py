@@ -89,7 +89,7 @@ class Wrapshap:
         self.task_type = task_type
 
 
-    def shapRFE(self, surrogate_metrics: bool = False, top: int = None):
+    def shapRFE(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
         """
         Wrapshap implementation of Recursive Feature Elimination (RFE). 
 
@@ -110,7 +110,8 @@ class Wrapshap:
             feature_names=self.feature_names,
             surrogate_metrics=surrogate_metrics,
             top=top,
-            task_type=self.task_type
+            task_type=self.task_type,
+            plot = plot
         )
     
 
@@ -140,7 +141,7 @@ class Wrapshap:
         )
     
 
-    def shapBFE(self, surrogate_metrics: bool = False, top: int = None):
+    def shapBFE(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
         """
         Wrapshap implementation of Backward Feature Elimination (BFE). 
 
@@ -161,7 +162,8 @@ class Wrapshap:
             feature_names=self.feature_names,
             surrogate_metrics=surrogate_metrics,
             top=top,
-            task_type=self.task_type
+            task_type=self.task_type, 
+            plot = plot
         )
     
 

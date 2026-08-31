@@ -46,7 +46,7 @@ class WrappedBinaryClassifierLGB_GPU(WrappedBinaryClassifierLGB):
         )
 
     @wrapshap_required('wrapshap')
-    def shapFFS(self, surrogate_metrics: bool = False, top: int = None):
+    def shapFFS(self, surrogate_metrics: bool = False, top: int = None,  plot:bool = True):
         """
         Simply calls Wrapshap GPU implementation of Forward Feature Selection (FFS). 
 
@@ -60,11 +60,11 @@ class WrappedBinaryClassifierLGB_GPU(WrappedBinaryClassifierLGB):
                             dictionary with the corresponding performance metrics.
         """
 
-        return self.wrapshap.shapFFS(surrogate_metrics=surrogate_metrics, top=top)
+        return self.wrapshap.shapFFS(surrogate_metrics=surrogate_metrics, top=top, plot= plot)
     
 
     @wrapshap_required('wrapshap')
-    def shapBFE(self, surrogate_metrics: bool = False, top: int = None):
+    def shapBFE(self, surrogate_metrics: bool = False, top: int = None,  plot:bool = True):
         """
         Simply calls Wrapshap implementation of Backward Feature Elimination (BFE). 
 

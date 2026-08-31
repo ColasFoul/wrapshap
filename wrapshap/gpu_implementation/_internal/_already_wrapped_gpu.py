@@ -40,7 +40,7 @@ class WrappedBinaryClassifierXGB_GPU(WrappedBinaryClassifierXGB):
         )
 
     @wrapshap_required('wrapshap')
-    def shapFFS(self, surrogate_metrics: bool = False, top: int = None):
+    def shapFFS(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
         """
         Simply calls Wrapshap GPU implementation of Forward Feature Selection (FFS). 
 
@@ -54,11 +54,11 @@ class WrappedBinaryClassifierXGB_GPU(WrappedBinaryClassifierXGB):
                             dictionary with the corresponding performance metrics.
         """
 
-        return self.wrapshap.shapFFS(surrogate_metrics=surrogate_metrics, top=top)
+        return self.wrapshap.shapFFS(surrogate_metrics=surrogate_metrics, top=top,plot=plot)
     
 
     @wrapshap_required('wrapshap')
-    def shapBFE(self, surrogate_metrics: bool = False, top: int = None):
+    def shapBFE(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
         """
         Simply calls Wrapshap implementation of Backward Feature Elimination (BFE). 
 
@@ -72,7 +72,7 @@ class WrappedBinaryClassifierXGB_GPU(WrappedBinaryClassifierXGB):
                             dictionary with the corresponding performance metrics.
         """
 
-        return self.wrapshap.shapBFE(surrogate_metrics=surrogate_metrics, top=top)
+        return self.wrapshap.shapBFE(surrogate_metrics=surrogate_metrics, top=top,plot=plot)
     
     @wrapshap_required('wrapshap')
     def shapNCK(self, k: int = 2, batch_size: int = 500, selected_features: list = [], top: int = None):

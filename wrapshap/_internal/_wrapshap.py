@@ -27,7 +27,8 @@ def shapRFE(
         feature_names: list,
         surrogate_metrics: bool = False,
         top: int = None,
-        task_type: str = 'classification'
+        task_type: str = 'classification',
+        plot : bool = True,
 ) -> tuple:
     """
     Wrapshap implementation of Recursive Feature Elimination (RFE). 
@@ -94,6 +95,9 @@ def shapRFE(
         _progress_bar(len(removed_features), len(feature_names), mode='ascending')
 
     removed_features.reverse()
+    
+    if plot :
+        _plot_performance(results)
     return removed_features, results
 
 
@@ -104,7 +108,7 @@ def shapFFS(
         surrogate_metrics: bool = False,
         top: int = None,
         task_type: str = 'classification',
-        plot: bool = False
+        plot: bool = True
 ) -> tuple:
     """
     Wrapshap implementation of Forward Feature Selection (FFS). 
@@ -195,7 +199,8 @@ def shapBFE(
         feature_names: list,
         surrogate_metrics: bool = False,
         top: int = None,
-        task_type: str = 'classification'
+        task_type: str = 'classification',
+        plot: bool = True
 ) -> tuple:
     """
     Wrapshap implementation of Backward Feature Elimination (BFE). 
@@ -291,6 +296,8 @@ def shapBFE(
             top=top,
             task_type=task_type
         )
+    if plot :
+        _plot_performance(results)
 
     return removed_features, results
 

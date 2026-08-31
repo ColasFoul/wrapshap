@@ -25,7 +25,8 @@ from ..._internal._wrapshap import _progress_bar
 # Public API - These utilities are used by other modules and re-exported.
 # ----------------------------------------------------------------------------------------------------------------------
 
-def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndarray, y_pred_test: np.ndarray, feature_names: list, top: int = None):
+def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndarray, y_pred_test: np.ndarray,
+            feature_names: list, top: int = None, plot:bool = True):
     """
     Wrapshap GPU implementation of Forward Feature Selection (FFS). 
 
@@ -93,12 +94,15 @@ def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
         results[len(selected_features)] = best_metrics
 
         _progress_bar(len(selected_features), len(feature_names))
+        
+    if plot :
+        _plot_performance(results)
 
     return selected_features, results
 
 
 def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndarray, y_pred_test: np.ndarray, 
-            feature_names: list, top: int = None):
+            feature_names: list, top: int = None, plot:bool = True):
     """
     Wrapshap GPU implementation of Backward Feature Elimination (BFE). 
     Parameters:
@@ -133,15 +137,19 @@ def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
     predictions_full, weights_full = _process_batch(X_full_tensor, y_full_tensor, n_samples)
 
     full_r2_score = _calculate_r2(y_full_tensor, predictions_full)
+    full_mae_score = _calculate_mae(y_full_tensor, predictions_full)
     _progress_bar(1, len(feature_names))
 
-    full_metrics = {'train_pred_r2': full_r2_score.numpy()[0][0]}
+    full_metrics = {'train_pred_r2': full_r2_score.numpy()[0][0],
+                    'train_pred_mae': full_mae_score.numpy()[0][0]}
     if shap_test is not None and y_pred_test is not None:
         X_test_full = shap_test[:, [feature_names.index(f) for f in selected_features]]
         X_test_full_tensor = tf.constant(X_test_full.reshape(1, shap_test.shape[0], -1), dtype=tf.float32)
         y_test_full_tensor = tf.constant(y_pred_test.reshape(1, shap_test.shape[0], -1), dtype=tf.float32)
         test_predictions_full = _predict_batch(X_test_full_tensor, weights_full, shap_test.shape[0])
         full_metrics['test_pred_r2'] = _calculate_r2(y_test_full_tensor, test_predictions_full).numpy()[0][0]
+        full_metrics['test_pred_mae'] = _calculate_mae(y_test_full_tensor, test_predictions_full).numpy()[0][0]
+        
     results[len(selected_features)] = full_metrics
 
     while len(selected_features) > 1:
@@ -153,12 +161,14 @@ def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
         y_batches_tensor = tf.constant(np.stack(y_batches, axis=0), dtype=tf.float32)
         predictions_batches, weights_batches = _process_batch(X_batches_tensor, y_batches_tensor, n_samples)
         batch_r2_scores = _calculate_r2(y_batches_tensor, predictions_batches)
+        batch_mae_scores = _calculate_mae(y_batches_tensor, predictions_batches)
 
         best_combination_idx = np.argmax(batch_r2_scores.numpy())
         worst_feature = selected_features[best_combination_idx]
         remaining_features = [f for f in selected_features if f != worst_feature]
 
-        iter_metrics = {'train_pred_r2': batch_r2_scores.numpy()[best_combination_idx][0]}
+        iter_metrics = {'train_pred_r2': batch_r2_scores.numpy()[best_combination_idx][0],
+                        'train_pred_mae': batch_mae_scores.numpy()[best_combination_idx][0]}
 
         # --- évaluation test : on réutilise les poids déjà fit sur train pour la meilleure combinaison ---
         if shap_test is not None and y_pred_test is not None:
@@ -168,6 +178,7 @@ def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
             y_test_tensor = tf.constant(y_pred_test[np.newaxis, ...], dtype=tf.float32)
             test_predictions = _predict_batch(X_test_tensor, best_weights, shap_test.shape[0])
             iter_metrics['test_pred_r2'] = _calculate_r2(y_test_tensor, test_predictions).numpy()[0][0]
+            iter_metrics['test_pred_mae'] = _calculate_mae(y_test_tensor, test_predictions).numpy()[0][0]
 
         selected_features = remaining_features
         removed_features.append(worst_feature)
@@ -181,6 +192,7 @@ def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
 
 def shapNCK(
         shap_train: np.ndarray, y_pred_train: np.ndarray,
+        shap_test: np.ndarray, y_pred_test: np.ndarray,
         feature_names: list,
         k: int = 2, 
         batch_size: int = 500, 
@@ -209,12 +221,13 @@ def shapNCK(
     """
 
     if top is not None:
-        shap_train, feature_names = _select_top(top, shap_train, feature_names)
+        shap_train, shap_test, feature_names = _select_top(top, shap_train, shap_test, feature_names)
 
     y_pred_train = y_pred_train.reshape(-1,1)
+    y_pred_test = y_pred_test.reshape(-1,1)
 
     n_samples = shap_train.shape[0]
-    r2_scores = []
+    all_metrics = {}
 
     remaining_features = [feature for feature in feature_names if feature not in selected_features]
     
@@ -228,28 +241,45 @@ def shapNCK(
         
         X_batch_data = np.array([shap_train[:, [feature_names.index(f) for f in selected_features + list(comb)]] 
                                  for comb in batch_combinations])
-        
-        y_batch_data = np.tile(y_pred_train, (len(batch_combinations), 1, 1))
+        X_batch_data_test = np.array([shap_test[:, [feature_names.index(f) for f in selected_features + list(comb)]] 
+                                 for comb in batch_combinations])
+        #X_batch_data_test = X_batch_data_test.reshape(1,shap_test.shape[0],-1)
 
+        y_batch_data = np.tile(y_pred_train, (len(batch_combinations), 1, 1))
+        y_batch_data_test = np.tile(y_pred_test, (len(batch_combinations), 1, 1))
+        
         X_batch = tf.constant(X_batch_data, dtype=tf.float32)
         y_batch = tf.constant(y_batch_data, dtype=tf.float32)
-
-        predictions_batch = _process_batch(X_batch, y_batch, n_samples)
-
+        X_batch_test = tf.constant(X_batch_data_test, dtype = tf.float32)
+        y_batch_test = tf.constant(y_batch_data_test, dtype = tf.float32)
+        
+        predictions_batch, weights = _process_batch(X_batch, y_batch, n_samples)
+        predictions_test = _predict_batch(X_batch_test, weights, shap_test.shape[0])
+        
         batch_r2_scores = _calculate_r2(y_batch, predictions_batch)
-        r2_scores.extend(batch_r2_scores.numpy())
+        test_r2_scores = _calculate_r2(y_batch_test, predictions_test)
+        batch_mae_scores = _calculate_mae(y_batch, predictions_batch)
+        test_mae_scores = _calculate_mae(y_batch_test, predictions_test)
+        
+        full_metrics = {'train_pred_r2' :batch_r2_scores.numpy(),
+                        'test_pred_r2': test_r2_scores.numpy(),
+                        'train_pred_mae': batch_mae_scores.numpy(),
+                        'test_pred_mae': test_mae_scores.numpy()}
 
+        all_metrics[i // batch_size] = full_metrics  # stockage en dict
+        
         print(f"Processed batch {i // batch_size + 1}/{1 + num_combinations // batch_size}")
 
-    r2_scores = [r2[0] for r2 in r2_scores]
-    max_r2_index = np.argmax(r2_scores)
-    best_r2_score = r2_scores[max_r2_index]
+
+    test_r2_scores = [metrics['train_pred_r2'][0] for metrics in all_metrics.values()]
+    max_r2_index   = np.argmax(test_r2_scores)
+    best_r2_score  = test_r2_scores[max_r2_index]
     best_feature_combination = feature_combinations[max_r2_index]
 
     print("\nBest R2 Score:", best_r2_score)
     print("Best Feature Combination:", best_feature_combination)
 
-    return best_feature_combination, r2_scores, feature_combinations
+    return best_feature_combination, all_metrics, feature_combinations
 
 
 def shapXFFS(
@@ -325,15 +355,19 @@ def shapXFFS(
 
             r2_score = _calculate_r2(y_batch, predictions).numpy()
             test_r2_score = _calculate_r2(y_batch_test, test_predictions).numpy()
+            mae_score = _calculate_mae(y_batch, predictions).numpy()
+            test_mae_score = _calculate_mae(y_batch_test,test_predictions).numpy()
             
-            feature_scores.append((feature, r2_score, test_r2_score))
+            feature_scores.append((feature, r2_score, test_r2_score, mae_score, test_mae_score))
 
     best_features = sorted(feature_scores, key=lambda x: x[1], reverse=True)[:n]
 
-    for best_feature, score, test_score in best_features:
+    for best_feature, score, test_score, mae_scores, test_mae_scores in best_features:
         new_selected_features = selected_features + [best_feature]
         metrics = {'train_pred_r2' : score [0][0],
-                   'test_pred_r2': test_score [0][0]}
+                   'test_pred_r2': test_score [0][0],
+                   'train_pred_mae': mae_scores[0][0],
+                   'test_pred_mae': test_mae_scores[0][0]}
         if sorted(new_selected_features) in [sorted(seq) for seq in unique_sequences]:
             if best_feature not in tree:
                 tree[best_feature] = {'train_metrics': metrics, 'duplicate': 1}
@@ -483,6 +517,13 @@ def _calculate_r2(y_true, y_pred):
 
     return r2_score
 
+def _calculate_mae(y_true, y_pred):
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    
+    y_pred = tf.reshape(y_pred, tf.shape(y_true))
+    mae = tf.reduce_mean(tf.abs(y_true - y_pred), axis=1)
+    return mae
 
 def _process_batch(X_batch, y_batch, n_samples):
     lambda_reg = 1
@@ -565,3 +606,44 @@ def extract_r2_values(nested_dict, r2_values, metric):
             r2_values.append(value['train_metrics'][metric])
         if 'next_features' in value:
             extract_r2_values(value['next_features'], r2_values, metric)
+            
+def _plot_performance(perfs):
+    n_features_list = []
+    r2_list         = []
+    
+    for n_feat, values in perfs.items():
+        n_features_list.append(int(n_feat))
+        for metric, value in values.items():
+            if metric == 'test_pred_r2':
+                r2_list.append(value)
+    
+    # Trier par nombre de features
+    order        = np.argsort(n_features_list)
+    n_features   = np.array(n_features_list)[order]
+    r2_scores    = np.array(r2_list)[order]
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    ax.plot(n_features, r2_scores,
+            color='steelblue', linewidth=2,
+            marker='o', markersize=5, zorder=3)
+    ax.fill_between(n_features, r2_scores, alpha=0.08, color='steelblue')
+    
+    
+    # Point max (pour référence)
+    ax.scatter(n_features[np.argmax(r2_scores)], r2_scores.max(),
+               color='gray', zorder=4, s=60, marker='D',
+               label=f'Max R²={r2_scores.max():.3f} ({n_features[np.argmax(r2_scores)]} features)')
+    
+    ax.set_xlabel('Number of selected features', fontsize=12)
+    ax.set_ylabel('Test R²', fontsize=12)
+    ax.set_title('Feature selection — performance vs. parsimony trade-off',
+                 fontsize=12, fontweight='bold')
+    ax.legend(fontsize=9, framealpha=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_xticks(n_features)
+    ax.set_xticklabels(n_features, rotation=45 if len(n_features) > 10 else 0)
+    ax.tick_params(labelsize=9)
+    
+    plt.tight_layout()
+    plt.show()
