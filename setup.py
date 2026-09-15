@@ -17,7 +17,7 @@ setup(
     ],
     extras_require={
         'gpu': [
-            'tensorflow>=2.16.1'
+            'tensorflow>=2.16.1, <=2.20'
         ]
     },
     author='Félix Furger',
