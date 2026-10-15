@@ -17,7 +17,7 @@ from ._internal._wrapshap_gpu import print_XFFS_tree, plot_XFFS_tree
 
 class WrapshapGPU(Wrapshap):
 
-    def shapFFS(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
+    def shapFFS(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True, time_info:bool = True):
         """
         Wrapshap GPU implementation of Forward Feature Selection (FFS). 
 
@@ -38,7 +38,8 @@ class WrapshapGPU(Wrapshap):
             y_pred_test= self.y_pred_test,
             feature_names=self.feature_names,
             top=top,
-            plot=plot            
+            plot=plot, 
+            time_info=time_info            
         )
         if surrogate_metrics:
             perfs = get_surrogate_metrics(
@@ -56,7 +57,7 @@ class WrapshapGPU(Wrapshap):
         return ranking, perfs
     
 
-    def shapBFE(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True):
+    def shapBFE(self, surrogate_metrics: bool = False, top: int = None, plot:bool = True, time_info:bool = True):
         """
         Wrapshap GPU implementation of Backward Feature Elimination (BFE). 
 
@@ -77,7 +78,8 @@ class WrapshapGPU(Wrapshap):
             y_pred_test= self.y_pred_test,
             feature_names=self.feature_names,
             top=top,
-            plot=plot            
+            plot=plot, 
+            time_info=time_info            
         )
         if surrogate_metrics:
             perfs = get_surrogate_metrics(

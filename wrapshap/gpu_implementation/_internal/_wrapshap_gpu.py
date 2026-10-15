@@ -16,7 +16,7 @@ from PIL import Image as PILImage
 import io
 import matplotlib.cm as cm
 
-
+import time
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from ..._internal._wrapshap import _progress_bar
@@ -26,7 +26,7 @@ from ..._internal._wrapshap import _progress_bar
 # ----------------------------------------------------------------------------------------------------------------------
 
 def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndarray, y_pred_test: np.ndarray,
-            feature_names: list, top: int = None, plot:bool = True):
+            feature_names: list, top: int = None, plot:bool = True, time_info:bool = True):
     """
     Wrapshap GPU implementation of Forward Feature Selection (FFS). 
 
@@ -54,6 +54,7 @@ def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
     results = {}
 
     _progress_bar(0, len(feature_names))
+    t_start = time.perf_counter()
 
     while len(selected_features) < n_features:
         best_score = float('-inf')
@@ -70,14 +71,15 @@ def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
         y_batches_tensor = tf.constant(np.stack(y_batches, axis=0), dtype=tf.float32)
         predictions_batches, weights_batches = _process_batch(X_batches_tensor, y_batches_tensor, n_samples)
         batch_r2_scores = _calculate_r2(y_batches_tensor, predictions_batches)
-        
+        batch_mae_scores = _calculate_mae(y_batches_tensor, predictions_batches)
         candidate_features = [f for f in feature_names if f not in selected_features]
         for idx, feature in enumerate(candidate_features):
             if batch_r2_scores[idx].numpy() > best_score:
                 best_score = batch_r2_scores[idx].numpy()
                 best_feature = feature
                 best_idx = idx
-                best_metrics = {'train_pred_r2': best_score[0]}
+                best_metrics = {'train_pred_r2': best_score[0],
+                                'train_mae_scores': batch_mae_scores[idx].numpy()[0]}
         
         # --- évaluation test : on réutilise les poids déjà fit sur train pour la combinaison gagnante ---
         if shap_test is not None and y_pred_test is not None:
@@ -88,21 +90,25 @@ def shapFFS(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
             y_test_tensor = tf.constant(y_pred_test[np.newaxis, ...], dtype=tf.float32)
             test_predictions = _predict_batch(X_test_tensor, best_weights, shap_test.shape[0])
             test_r2_score = _calculate_r2(y_test_tensor, test_predictions)
+            test_mae_score = _calculate_mae(y_test_tensor, test_predictions)
             best_metrics['test_pred_r2'] = test_r2_score[0].numpy()[0]
+            best_metrics['test_mae_scores'] = test_mae_score[0].numpy()[0]
+            
 
         selected_features.append(best_feature)
+        best_metrics['time'] = time.perf_counter() - t_start
         results[len(selected_features)] = best_metrics
 
         _progress_bar(len(selected_features), len(feature_names))
         
     if plot :
-        _plot_performance(results)
+        _plot_performance(results, time_info)
 
     return selected_features, results
 
 
 def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndarray, y_pred_test: np.ndarray, 
-            feature_names: list, top: int = None, plot:bool = True):
+            feature_names: list, top: int = None, plot:bool = True, time_info:bool = False):
     """
     Wrapshap GPU implementation of Backward Feature Elimination (BFE). 
     Parameters:
@@ -127,7 +133,9 @@ def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
     y_pred_train = y_pred_train.reshape(-1, 1)
     if y_pred_test is not None:
         y_pred_test = y_pred_test.reshape(-1, 1)
-
+        
+    t_start = time.perf_counter()
+    
     # --- étape initiale : toutes les variables ---
     X_full = shap_train[:, [feature_names.index(f) for f in selected_features]]
     y_full = y_pred_train
@@ -182,9 +190,15 @@ def shapBFE(shap_train: np.ndarray, shap_test: np.ndarray, y_pred_train: np.ndar
 
         selected_features = remaining_features
         removed_features.append(worst_feature)
+        
+        iter_metrics['time'] = time.perf_counter() - t_start
+        
         results[len(selected_features)] = iter_metrics
         _progress_bar(len(removed_features) + 1, len(feature_names))
 
+    if plot :
+        _plot_performance(results, time_info)
+        
     removed_features.append(selected_features[0])
     removed_features.reverse()
     return removed_features, results
@@ -271,9 +285,12 @@ def shapNCK(
         print(f"Processed batch {i // batch_size + 1}/{1 + num_combinations // batch_size}")
 
 
-    test_r2_scores = [metrics['train_pred_r2'][0] for metrics in all_metrics.values()]
-    max_r2_index   = np.argmax(test_r2_scores)
-    best_r2_score  = test_r2_scores[max_r2_index]
+    test_r2_flat = []
+    for key in sorted(all_metrics.keys()):
+        test_r2_flat.extend(all_metrics[key]['test_pred_r2'].tolist())
+    test_r2_flat = np.array(test_r2_flat)
+    max_r2_index   = np.argmax(test_r2_flat)
+    best_r2_score  = test_r2_flat[max_r2_index]
     best_feature_combination = feature_combinations[max_r2_index]
 
     print("\nBest R2 Score:", best_r2_score)
@@ -607,43 +624,96 @@ def extract_r2_values(nested_dict, r2_values, metric):
         if 'next_features' in value:
             extract_r2_values(value['next_features'], r2_values, metric)
             
-def _plot_performance(perfs):
+def _plot_performance(perfs, time_info = True):
     n_features_list = []
     r2_list         = []
+    time_list       = []
+    
+    alpha = 1
+    beta= 0.1
+
+    
     
     for n_feat, values in perfs.items():
         n_features_list.append(int(n_feat))
         for metric, value in values.items():
             if metric == 'test_pred_r2':
                 r2_list.append(value)
+            if metric == 'time':
+                time_list.append(value)
     
     # Trier par nombre de features
     order        = np.argsort(n_features_list)
     n_features   = np.array(n_features_list)[order]
     r2_scores    = np.array(r2_list)[order]
+    time_scores  = np.array(time_list)[order]
+        
+    def normalize(x):
+        x = np.array(x, dtype=float)
+        return (x - x.min()) / (x.max() - x.min() + 1e-9)
+    
+    #r2_norm = normalize(r2_scores)          # on veut maximiser -> reste tel quel
+    nf_norm = normalize(n_features)         # on veut minimiser
+    time_norm = normalize(time_scores)      # on veut minimiser
+    
     fig, ax = plt.subplots(figsize=(8, 4))
-
+    fs_scores = []
+    for nf, r2, t in zip(nf_norm, r2_scores, time_norm):
+        fs_scores.append((r2*alpha - beta*nf))
+    
+    fs_scores = np.array(fs_scores)
+    # -------------------------------------------------------
+    # AXE 1 — R²
+    # -------------------------------------------------------
+    
     ax.plot(n_features, r2_scores,
             color='steelblue', linewidth=2,
-            marker='o', markersize=5, zorder=3)
+            marker='o', markersize=5, zorder=3, label='Test R²', )
     ax.fill_between(n_features, r2_scores, alpha=0.08, color='steelblue')
     
-    
-    # Point max (pour référence)
-    ax.scatter(n_features[np.argmax(r2_scores)], r2_scores.max(),
-               color='gray', zorder=4, s=60, marker='D',
-               label=f'Max R²={r2_scores.max():.3f} ({n_features[np.argmax(r2_scores)]} features)')
+    best_idx = np.argmax(fs_scores)
+    ax.scatter(n_features[best_idx], r2_scores[best_idx],
+               color='steelblue', zorder=4, s=60, marker='D',
+               label=f'FS_score={fs_scores[best_idx]:.3f} ({n_features[best_idx]} features)')
     
     ax.set_xlabel('Number of selected features', fontsize=12)
-    ax.set_ylabel('Test R²', fontsize=12)
-    ax.set_title('Feature selection — performance vs. parsimony trade-off',
-                 fontsize=12, fontweight='bold')
-    ax.legend(fontsize=9, framealpha=0.5)
+    ax.set_ylabel('Test R²', fontsize=12, color='black')
+    ax.tick_params(axis='y', labelcolor='black', labelsize = 8)
     ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.set_xticks(n_features)
-    ax.set_xticklabels(n_features, rotation=45 if len(n_features) > 10 else 0)
-    ax.tick_params(labelsize=9)
+    
+    # -------------------------------------------------------
+    # AXE 2 — Computation time
+    # -------------------------------------------------------
+    if time_info :
+        ax2 = ax.twinx()  # partage le même axe x
+        ax2.plot(n_features, time_scores,
+                 color='coral', linewidth=2, linestyle='--',
+                 marker='s', markersize=4, zorder=2, label='Cumulative computation time')
+        
+        ax2.set_ylabel('Cumulative computation time (s)', fontsize=12, color='black')
+        ax2.tick_params(axis='y', labelcolor='black', labelsize = 8)
+        ax2.spines['top'].set_visible(False)
+    
+    # -------------------------------------------------------
+    # LÉGENDE COMBINÉE
+    # -------------------------------------------------------
+    
+    lines1, labels1 = ax.get_legend_handles_labels()
+    if time_info == True :
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, fontsize = 10, framealpha=0.5, loc ='lower right' )
+    else :
+        ax.legend(lines1, labels1, fontsize = 10, framealpha=0.5, loc ='lower right' )
+    
+    ax.set_title('Feature selection — performance vs. parsimony trade-off',
+                 fontsize=12)
+    if len(n_features) > 25:
+        ax.set_xticks(n_features[::2])
+        ax.set_xticklabels(n_features[::2], rotation=45, fontsize=10)
+    if len(n_features) <= 25:
+        ax.set_xticks(n_features)
+        ax.set_xticklabels(n_features, rotation=45, fontsize=10)
+    ax.tick_params(labelsize=10)
     
     plt.tight_layout()
     plt.show()
