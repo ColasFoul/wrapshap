@@ -9,13 +9,9 @@ and functions that are exported for use in public modules.
 import itertools
 import numpy as np
 import tensorflow as tf
-from graphviz import Digraph
 import uuid
-from IPython.display import display, Image
-from PIL import Image as PILImage
-import io
-import matplotlib.cm as cm
 
+import matplotlib.cm as cm
 import time
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -463,46 +459,105 @@ def print_XFFS_tree(
         with open(filename, 'w') as file:
             file.write(all_branches_text)
             
-            
-def plot_XFFS_tree (tree: dict, 
-                    metric: str ='train_pred_r2', 
-                    save: bool = False, 
-                    filename: str = 'tree.png'):
 
-    
-    color_map = plt.get_cmap('viridis')
+def plot_XFFS_tree(tree: dict,
+                   metric: str = 'train_pred_r2',
+                   save: bool = False,
+                   filename: str = 'tree.png',
+                   min_val: float = 0,
+                   max_val: float = 1,
+                   threshold: float = 0.90,
+                   cmap: str = 'viridis',
+                   leaf_width: float = 1.5,
+                   level_height: float = 1,
+                   fontsize: int = 12):
 
-    dot = Digraph(comment='Cluster 0 tree', graph_attr={'dpi': '300'})
-    add_nodes_edges(dot ,tree, metric,parent_name=None, color_map=color_map, min_val=0, max_val=1)
-    png_bytes = dot.pipe(format='png')
-    tree_img = PILImage.open(io.BytesIO(png_bytes)).convert('RGB')
-    
-    # 2. Générer la colorbar seule, à la même hauteur que l'arbre
-    fig, ax = plt.subplots(figsize=(0.5, tree_img.height / 300))  # hauteur ajustée au dpi
-    norm = plt.Normalize(vmin=0, vmax=1)
-    cb = fig.colorbar(cm.ScalarMappable(cmap='viridis', norm=norm), cax=ax)
-    cb.set_label('valeur')  # à adapter selon votre légende
-    
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    buf.seek(0)
-    bar_img = PILImage.open(buf).convert('RGB')
-    
-    # 3. Redimensionner la colorbar pour qu'elle ait la même hauteur que l'arbre
-    bar_img = bar_img.resize(
-        (int(bar_img.width * tree_img.height / bar_img.height), tree_img.height)
-    )
-    
-    # 4. Coller les deux images côte à côte
-    combined = PILImage.new('RGB', (tree_img.width + bar_img.width, tree_img.height), 'white')
-    combined.paste(tree_img, (0, 0))
-    combined.paste(bar_img, (tree_img.width, 0))
-    if save :
-        output_path = filename
-        dot.render(output_path, format='png', view=False)
-    
-    display(combined)
+    cmap = plt.get_cmap(cmap)
+    norm = mcolors.Normalize(vmin=min_val, vmax=max_val)
+
+    # 1. Aplatir le dict imbriqué en liste de noeuds
+    nodes = []
+
+    def build(d, parent, depth):
+        for key, value in d.items():
+            idx = len(nodes)
+            r2 = value['train_metrics'][metric] if 'train_metrics' in value else None
+            nodes.append(dict(key=key, r2=r2, parent=parent, depth=depth, children=[]))
+            if parent is not None:
+                nodes[parent]['children'].append(idx)
+            if 'next_features' in value:
+                build(value['next_features'], idx, depth + 1)
+
+    build(tree, None, 0)
+
+    # 2. Layout : les feuilles sont espacées régulièrement,
+    #    chaque parent est centré au-dessus de ses enfants
+    counter = [0]
+
+    def place(i):
+        n = nodes[i]
+        if not n['children']:
+            n['x'] = counter[0]
+            counter[0] += 1
+        else:
+            for c in n['children']:
+                place(c)
+            xs = [nodes[c]['x'] for c in n['children']]
+            n['x'] = (min(xs) + max(xs)) / 2
+        n['y'] = -n['depth']
+
+    for i, n in enumerate(nodes):
+        if n['parent'] is None:
+            place(i)
+
+    n_leaves = counter[0]
+    max_depth = max(n['depth'] for n in nodes)
+
+    # 3. Figure
+    fig, ax = plt.subplots(figsize=(max(4, n_leaves * leaf_width),
+                                    max(3, (max_depth + 1) * level_height)))
+    ax.set_xlim(-0.7, n_leaves - 0.3)
+    ax.set_ylim(-max_depth - 0.5, 0.5)
+    ax.axis('off')
+
+    # 4. Noeuds
+    for n in nodes:
+        if n['r2'] is None:
+            label, face, font = n['key'], 'white', 'black'
+            edge, lw, boxstyle = 'black', 1, 'round,pad=0.3'
+        else:
+            face = mcolors.to_hex(cmap(norm(n['r2'])))
+            font = get_font_color(face)
+            label = f"{n['key']}\n{n['r2']:.2f}"
+            if n['r2'] >= threshold:   # noeud mis en valeur
+                edge, lw, boxstyle = 'red', 3, 'round,pad=0.3'
+            else:
+                edge, lw, boxstyle = 'black', 1, 'round,pad=0.3'
+
+        n['text'] = ax.text(n['x'], n['y'], label, ha='center', va='center',
+                            fontsize=fontsize, color=font, zorder=3,
+                            bbox=dict(boxstyle=boxstyle, fc=face, ec=edge, lw=lw))
+
+    # 5. Arêtes (dessinées après les textes pour pouvoir s'arrêter au bord des boîtes)
+    for n in nodes:
+        if n['parent'] is not None:
+            p = nodes[n['parent']]
+            ax.annotate('', xy=(n['x'], n['y']), xytext=(p['x'], p['y']),
+                        arrowprops=dict(arrowstyle='-|>', color='0.3', lw=1,
+                                        shrinkA=0, shrinkB=0,
+                                        patchA=p['text'].get_bbox_patch(),
+                                        patchB=n['text'].get_bbox_patch()),
+                        zorder=1)
+
+    # 6. Colorbar native
+    sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.01, label=metric)
+
+    if save:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+
+    plt.show()
 # ---------------------------------------------------------------------------------------------------------------------
 # Internal Functions - Below are utilities intended only for internal use.
 # ---------------------------------------------------------------------------------------------------------------------

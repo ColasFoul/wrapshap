@@ -1,17 +1,21 @@
+This package allows you to perform SHAP-based feature selection and exploration for high-dimensional data, with both CPU and GPU support.
+
+**Paper:** [Furger et al. (2026), *Wrapshap: a high dimension feature selection framework to explore biological systems through machine learning explanations*](https://www.nature.com/articles/s41540-026-00779-z).
+
 ## How to install Wrapshap
 
-First download this repository. Then navigate to the root of the wrapshap folder where `setup.py` should be.
+Both CPU and GPU versions of Wrapshap are available.
 
-In order to install the normal CPU implementation of Wrapshap, please just run:
+In order to install the CPU implementation of Wrapshap, simply run:
 
 ```bash
-pip install .
+pip install wrapshap
 ```
 
 If you can afford it, the GPU implementation is much faster and comes with additional methods. To install it instead, please run:
 
 ```bash
-pip install .[gpu]
+pip install "wrapshap[gpu]"
 ```
 
 You should now be able to import wrapshap utilities.
